@@ -13,11 +13,14 @@ env/
 
 .ipynb_checkpoints/
 
-outputs/models/*.joblib
-outputs/models/*.pkl
+.idea/
 
 data/raw/
 !data/raw/.gitkeep
+
+outputs/models/*.joblib
+outputs/models/*.pkl
+outputs/reports/*_operation_level.csv
 
 .env
 .env.local
