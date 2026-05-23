@@ -10,6 +10,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(PROJECT_ROOT))
 
 from src.config import REPORTS_DIR  # noqa: E402
+from src.db import read_postgres_table  # noqa: E402
 from src.expected_actual import (  # noqa: E402
     build_deviation_summary,
     build_expected_actual_table,
@@ -20,8 +21,15 @@ from src.expected_actual import (  # noqa: E402
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run expected vs actual fee control engine.")
 
+    parser.add_argument("--source", choices=["csv", "postgres"], default="csv")
     parser.add_argument("--input-dir", default="data/raw/tiny")
     parser.add_argument("--top-n", type=int, default=100)
+
+    parser.add_argument("--db-host", default="localhost")
+    parser.add_argument("--db-port", default="5432")
+    parser.add_argument("--db-name", default="revenue_leakage_db")
+    parser.add_argument("--db-user", default="postgres")
+    parser.add_argument("--mart-table", default="mart.expected_actual_operation_level")
 
     return parser.parse_args()
 
@@ -35,27 +43,36 @@ def read_csv(input_dir: Path, filename: str) -> pd.DataFrame:
     return pd.read_csv(path)
 
 
-def main() -> None:
-    args = parse_args()
-
-    input_dir = Path(args.input_dir)
-    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-
+def build_from_csv(input_dir: Path) -> pd.DataFrame:
     operations = read_csv(input_dir, "operations.csv")
     tariff_rules = read_csv(input_dir, "tariff_rules.csv")
     actual_charges = read_csv(input_dir, "actual_charges.csv")
 
-    expected_actual = build_expected_actual_table(
+    return build_expected_actual_table(
         operations=operations,
         tariff_rules=tariff_rules,
         actual_charges=actual_charges,
     )
 
+
+def build_from_postgres(args: argparse.Namespace) -> pd.DataFrame:
+    return read_postgres_table(
+        table_name=args.mart_table,
+        db_host=args.db_host,
+        db_port=args.db_port,
+        db_name=args.db_name,
+        db_user=args.db_user,
+    )
+
+
+def save_reports(expected_actual: pd.DataFrame, top_n: int) -> None:
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+
     summary_by_product = build_deviation_summary(expected_actual, ["product_type"])
     summary_by_channel = build_deviation_summary(expected_actual, ["channel"])
     summary_by_segment = build_deviation_summary(expected_actual, ["client_segment"])
     summary_by_product_channel = build_deviation_summary(expected_actual, ["product_type", "channel"])
-    top_cases = build_top_cases(expected_actual, n=args.top_n)
+    top_cases = build_top_cases(expected_actual, n=top_n)
 
     expected_actual_path = REPORTS_DIR / "expected_actual_operation_level.csv"
     product_path = REPORTS_DIR / "fee_deviation_by_product.csv"
@@ -84,6 +101,17 @@ def main() -> None:
     print(segment_path)
     print(product_channel_path)
     print(top_cases_path)
+
+
+def main() -> None:
+    args = parse_args()
+
+    if args.source == "csv":
+        expected_actual = build_from_csv(Path(args.input_dir))
+    else:
+        expected_actual = build_from_postgres(args)
+
+    save_reports(expected_actual, top_n=args.top_n)
 
 
 if __name__ == "__main__":
